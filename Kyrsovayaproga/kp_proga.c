@@ -13,12 +13,6 @@ typedef struct {
     char status[20];  // Статус
 } pokazatel_t;
 
-pokazatel_t tempd = { "m", 0, 2, "k" };  // данные для температуры
-pokazatel_t davlen = { "n", 0, 100, "r" };  //  данные для давления
-
-int rab[50] = { 0 };  // Массив для работы счетчиков печей
-int file_position = 0;  // Переменная для хранения позиции в файле
-
 // Функция проверки отклонений температуры
 int proverka_temp(const pokazatel_t* tempd, const pokazatel_t* pech, double time_seconds);
 // Функция проверки давления
@@ -28,7 +22,7 @@ int change_limits(pokazatel_t* tempd, pokazatel_t* davlen);
 // Функция для чтения данных из файла
 int read_data_from_file(const char* filename, pokazatel_t* pech, long* file_position);
 // Функция мониторинга печей
-void monitor(const pokazatel_t* tempd, const pokazatel_t* davlen, double* time_seconds, const char* input_filename);
+void monitor(const pokazatel_t* tempd, const pokazatel_t* davlen, double* time_seconds, const char* input_filename, int* rab, long* file_position);
 // Функция проверки работы печей
 int check_rab(const int* rab, int* not_working_pechi);
 // Функция отображения информации о текущем состоянии печи
@@ -42,9 +36,9 @@ int read_line_from_file(FILE* file, pokazatel_t* pech);
 // Функция поиска индекса печи по имени
 int naiti_index(const char* name);
 // Функция для вычисления среднего значения
-double sred();
+double sred(const char* filename);
 // Функция записи давления в файл
-void write_davl_to_file(const char* filename, double davl, const char* name);
+int write_davl_to_file(const char* filename, double davl, const char* name);
 // Функция вычисляет ожидаемую температуру 
 double grafot(double x) {
     return x * atan(x) - log(sqrt(1 + pow(x, 2)));
@@ -52,24 +46,27 @@ double grafot(double x) {
 
 int main() {
     setlocale(LC_CTYPE, "RUS");
-    int choice;
+
+    pokazatel_t tempd = { "m", 0, 2, "k" };  // Данные для температуры
+    pokazatel_t davlen = { "n", 0, 100, "r" };  // Данные для давления
+    int rab[50] = { 0 };  // Массив для работы счетчиков печей
+    long file_position = 0;  // Переменная для хранения позиции в файле
     double time_seconds = 0.0;
-    char input_filename[260];  // Буфер для имени файла
+
+    int choice;
+    char input_filename[260];  // Имя входного файла
 
     printf("=== Программа мониторинга печи для обжига ===\n");
-    printf("===    Разработал: Лукьянов Илья бИЦ-241  ===\n");
     printf("Введите имя файла с данными для мониторинга: ");
     scanf("%s", input_filename);
-    printf("Имя успешно принято\n");
 
     while (1) {
-        printf("===                Меню                   ===\n");
+        printf("=== Меню ===\n");
         printf("1. Считать данные из файла и выполнить мониторинг\n");
         printf("2. Изменить допустимые пределы температуры и давления\n");
         printf("3. Какие печи не работали\n");
         printf("4. Считать среднее значение давления из файла\n");
         printf("5. Выход\n");
-
         printf("Введите ваш выбор: ");
         scanf("%d", &choice);
 
@@ -79,26 +76,22 @@ int main() {
                 printf("Не удалось считать данные из файла.\n");
             }
             else {
-                monitor(&tempd, &davlen, &time_seconds, input_filename);
-
+                monitor(&tempd, &davlen, &time_seconds, input_filename, rab, &file_position);
             }
             break;
+
         case 2:
-        {
-            int result = change_limits(&tempd, &davlen);
-            if (result == 0) {
+            if (change_limits(&tempd, &davlen) == 0) {
                 printf("Допустимые пределы успешно изменены.\n");
             }
             else {
                 printf("Ошибка при изменении пределов.\n");
             }
             break;
-        }
-        case 3:
-        {
-            int not_working_pechi[50];  // Массив для хранения номеров неработающих печей
-            int not_working_count = check_rab(rab, not_working_pechi);
 
+        case 3: {
+            int not_working_pechi[50];
+            int not_working_count = check_rab(rab, not_working_pechi);
             if (not_working_count > 0) {
                 printf("Печи, которые не работали:\n");
                 for (int i = 0; i < not_working_count; i++) {
@@ -110,9 +103,12 @@ int main() {
             }
             break;
         }
-        case 4:
-        {
-            double sred_davl = sred();
+
+        case 4: {
+            char filename[260];
+            printf("Введите имя файла для вычисления среднего давления: ");
+            scanf("%s", filename);
+            double sred_davl = sred(filename);
             if (sred_davl != -1.0) {
                 printf("Среднее значение давления: %.2f Па\n", sred_davl);
             }
@@ -121,9 +117,11 @@ int main() {
             }
             break;
         }
+
         case 5:
             printf("Выход из программы.\n");
             return 0;
+
         default:
             printf("Некорректный выбор. Попробуйте снова.\n");
         }
@@ -138,11 +136,11 @@ int main() {
  * time_seconds - указатель на переменную с текущим временем
  * input_filename - имя файла с данными для мониторинга
  */
-void monitor(const pokazatel_t* tempd, const pokazatel_t* davlen, double* time_seconds, const char* input_filename) {
+void monitor(const pokazatel_t* tempd, const pokazatel_t* davlen, double* time_seconds, const char* input_filename, int* rab, long* file_position) {
     int line_count = 0;
     while (1) {
         pokazatel_t pech;
-        if (read_data_from_file(input_filename, &pech, &file_position) == 0) {
+        if (read_data_from_file(input_filename, &pech, file_position) == 0) {
             break;
         }
 
@@ -151,7 +149,17 @@ void monitor(const pokazatel_t* tempd, const pokazatel_t* davlen, double* time_s
         process_data(tempd, davlen, &pech, rab, *time_seconds);
 
 
-        write_davl_to_file("C:\\Users\\Илья\\OneDrive\\Рабочий стол\\Программирование\\КУРСОВАЯ\\output.txt", pech.davl, pech.name);
+        int result = write_davl_to_file("output.txt", pech.davl, pech.name);
+        if (result == -1) {
+            printf("Ошибка: Не удалось открыть файл для записи.\n");
+        }
+        else if (result == -2) {
+            printf("Ошибка: Не удалось записать данные в файл.\n");
+        }
+        else {
+            printf("Данные успешно записаны в файл.\n");
+        }
+
 
         line_count++;
         if (line_count == 50) {
@@ -167,9 +175,18 @@ void monitor(const pokazatel_t* tempd, const pokazatel_t* davlen, double* time_s
  * davl - значение давления
  * name - имя печи
  */
-void write_davl_to_file(const char* filename, double davl, const char* name) {
+ /**
+ * Функция записи давления в файл
+ * filename - имя выходного файла
+ * davl - значение давления
+ * name - имя печи
+ * return 0 - успешная запись, -1 - ошибка при открытии файла, -2 - ошибка при записи
+ */
+int write_davl_to_file(const char* filename, double davl, const char* name) {
     static int first_call = 1;  // Флаг для проверки первого вызова функции
     FILE* output_file;
+
+    // Открытие файла в зависимости от первого вызова
     if (first_call) {
         output_file = fopen(filename, "w");
         first_call = 0;  // После первого вызова меняем флаг
@@ -178,15 +195,23 @@ void write_davl_to_file(const char* filename, double davl, const char* name) {
         output_file = fopen(filename, "a");
     }
 
+    // Проверка на успешное открытие файла
     if (output_file == NULL) {
         perror("Ошибка при открытии файла для записи давления");
-        return;
+        return -1;
     }
 
-    fprintf(output_file, "%f %s\n", davl, name);
+    // Запись данных в файл
+    if (fprintf(output_file, "%f %s\n", davl, name) < 0) {
+        perror("Ошибка при записи данных в файл");
+        fclose(output_file);
+        return -2;
+    }
 
     fclose(output_file);
+    return 0;  // Успешное завершение
 }
+
 /**
  * Функция чтения данных из файла
  * filename - имя файла для чтения
@@ -378,10 +403,11 @@ int naiti_index(const char* name) {
 }
 /**
  * Функция вычисления среднего значения давления
+ * filename - имя файла для чтения данных
  * return среднее значение давления или -1.0 в случае ошибки
  */
-double sred() {
-    FILE* file = fopen("C:\\Users\\Илья\\OneDrive\\Рабочий стол\\Программирование\\КУРСОВАЯ\\output.txt", "r");
+double sred(const char* filename) {
+    FILE* file = fopen(filename, "r");
     if (file == NULL) {
         perror("Ошибка при открытии файла для чтения");
         return -1.0;
